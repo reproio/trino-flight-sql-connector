@@ -1,0 +1,9 @@
+# trino-flight-sql-connector
+
+Trinoからflight-sql-jdbc-driverを利用してFlight SQLプロトコルを実装しているデータベースにアクセスするためのコネクタ。
+
+Flight SQL ServerがどういったSQLを受け付けるかはバックエンドの実装に依存する。初期実装ではDuckDBをバックエンドとして利用するサーバーを想定し、DuckDBがサポートするSQLを受け付けると仮定する。
+
+初期実装ではTrinoのバージョンは476を利用する。
+
+単純なpredicate pushdown, projection pushdownのサポートを目標とする。
