@@ -6,3 +6,17 @@ build
 
 # Ignore Kotlin plugin data
 .kotlin
+
+# IDE
+.idea/
+
+# Eclipse / JDTLS (jdtls also writes .classpath/.project/.settings into the project)
+.classpath
+.project
+.settings/
+.factorypath
+bin/
+
+# Derby (test FlightSqlExample generates this at the working directory)
+derby.log
+target/derbyDB/
