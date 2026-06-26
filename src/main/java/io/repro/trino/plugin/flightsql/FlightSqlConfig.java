@@ -1,130 +1,179 @@
 package io.repro.trino.plugin.flightsql;
 
+import com.google.common.base.Splitter;
+import com.google.common.collect.ImmutableMap;
 import io.airlift.configuration.Config;
 import io.airlift.configuration.ConfigDescription;
 import io.airlift.configuration.ConfigSecuritySensitive;
+import jakarta.validation.constraints.NotNull;
 
-import java.util.Optional;
-import java.util.Properties;
+import java.util.Map;
 
-/**
- * Flight SQL 固有の追加プロパティ。JDBC URL 本体は Trino の base-jdbc 共通の
- * {@code connection-url}（{@link io.trino.plugin.jdbc.BaseJdbcConfig}）で
- * 受け取る。例: {@code connection-url=jdbc:arrow-flight-sql://host:port/}
- */
 public class FlightSqlConfig
 {
-    private boolean useEncryption = true;
-    private boolean disableCertificateVerification;
-    private boolean useSystemTrustStore;
-    private String trustStorePath;
-    private String trustStorePassword;
-    private String token;
-    private String defaultDatabase;
+    public enum Dialect
+    {
+        DUCKDB,
+        DERBY,
+    }
 
-    public boolean isUseEncryption()
+    private String uri;
+    private Boolean useEncryption;
+    private boolean tlsSkipVerify;
+    private String tlsTrustStorePath;
+    private String username;
+    private String password;
+    private String authorizationHeader;
+    private String rpcHeadersSpec = "";
+    private String defaultDatabase;
+    private Dialect dialect = Dialect.DUCKDB;
+
+    @NotNull
+    public String getUri()
+    {
+        return uri;
+    }
+
+    @Config("flight.uri")
+    @ConfigDescription("Flight SQL server URI, e.g. grpc://host:port or grpc+tls://host:port")
+    public FlightSqlConfig setUri(String uri)
+    {
+        this.uri = uri;
+        return this;
+    }
+
+    public Boolean getUseEncryption()
     {
         return useEncryption;
     }
 
     @Config("flight.use-encryption")
-    @ConfigDescription("Use TLS for the connection (default true)")
-    public FlightSqlConfig setUseEncryption(boolean useEncryption)
+    @ConfigDescription("Force TLS on/off; if unset, inferred from URI scheme (grpc+tls -> true)")
+    public FlightSqlConfig setUseEncryption(Boolean useEncryption)
     {
         this.useEncryption = useEncryption;
         return this;
     }
 
-    public boolean isDisableCertificateVerification()
+    public boolean isTlsSkipVerify()
     {
-        return disableCertificateVerification;
+        return tlsSkipVerify;
     }
 
-    @Config("flight.disable-certificate-verification")
-    @ConfigDescription("Skip TLS certificate verification (test/dev only)")
-    public FlightSqlConfig setDisableCertificateVerification(boolean disableCertificateVerification)
+    @Config("flight.tls.skip-verify")
+    @ConfigDescription("Skip TLS certificate verification (dev/test only)")
+    public FlightSqlConfig setTlsSkipVerify(boolean tlsSkipVerify)
     {
-        this.disableCertificateVerification = disableCertificateVerification;
+        this.tlsSkipVerify = tlsSkipVerify;
         return this;
     }
 
-    public boolean isUseSystemTrustStore()
+    public String getTlsTrustStorePath()
     {
-        return useSystemTrustStore;
+        return tlsTrustStorePath;
     }
 
-    @Config("flight.use-system-trust-store")
-    @ConfigDescription("Use the OS trust store for TLS")
-    public FlightSqlConfig setUseSystemTrustStore(boolean useSystemTrustStore)
+    @Config("flight.tls.trust-store-path")
+    @ConfigDescription("Path to a PEM file containing trusted CA certificates")
+    public FlightSqlConfig setTlsTrustStorePath(String tlsTrustStorePath)
     {
-        this.useSystemTrustStore = useSystemTrustStore;
+        this.tlsTrustStorePath = tlsTrustStorePath;
         return this;
     }
 
-    public Optional<String> getTrustStorePath()
+    public String getUsername()
     {
-        return Optional.ofNullable(trustStorePath);
+        return username;
     }
 
-    @Config("flight.trust-store")
-    @ConfigDescription("Path to the TLS trust store")
-    public FlightSqlConfig setTrustStorePath(String trustStorePath)
+    @Config("flight.username")
+    @ConfigDescription("Username for basic authentication")
+    public FlightSqlConfig setUsername(String username)
     {
-        this.trustStorePath = trustStorePath;
+        this.username = username;
         return this;
     }
 
-    public Optional<String> getTrustStorePassword()
+    public String getPassword()
     {
-        return Optional.ofNullable(trustStorePassword);
+        return password;
     }
 
-    @Config("flight.trust-store-password")
-    @ConfigDescription("Password for the TLS trust store")
+    @Config("flight.password")
+    @ConfigDescription("Password for basic authentication")
     @ConfigSecuritySensitive
-    public FlightSqlConfig setTrustStorePassword(String trustStorePassword)
+    public FlightSqlConfig setPassword(String password)
     {
-        this.trustStorePassword = trustStorePassword;
+        this.password = password;
         return this;
     }
 
-    public Optional<String> getToken()
+    public String getAuthorizationHeader()
     {
-        return Optional.ofNullable(token);
+        return authorizationHeader;
     }
 
-    @Config("flight.token")
-    @ConfigDescription("Bearer token for authentication (mutually exclusive with user/password)")
+    @Config("flight.authorization-header")
+    @ConfigDescription("Full Authorization header value, e.g. 'Bearer <token>'")
     @ConfigSecuritySensitive
-    public FlightSqlConfig setToken(String token)
+    public FlightSqlConfig setAuthorizationHeader(String authorizationHeader)
     {
-        this.token = token;
+        this.authorizationHeader = authorizationHeader;
         return this;
     }
 
-    public Optional<String> getDefaultDatabase()
+    public String getRpcHeaders()
     {
-        return Optional.ofNullable(defaultDatabase);
+        return rpcHeadersSpec;
+    }
+
+    @Config("flight.rpc-headers")
+    @ConfigDescription("Additional gRPC headers as comma-separated key:value pairs (e.g. x-tenant:foo,x-debug:1)")
+    public FlightSqlConfig setRpcHeaders(String rpcHeadersSpec)
+    {
+        this.rpcHeadersSpec = rpcHeadersSpec == null ? "" : rpcHeadersSpec;
+        return this;
+    }
+
+    public Map<String, String> getParsedRpcHeaders()
+    {
+        if (rpcHeadersSpec.isBlank()) {
+            return Map.of();
+        }
+        ImmutableMap.Builder<String, String> headers = ImmutableMap.builder();
+        for (String pair : Splitter.on(',').trimResults().omitEmptyStrings().split(rpcHeadersSpec)) {
+            int idx = pair.indexOf(':');
+            if (idx <= 0 || idx == pair.length() - 1) {
+                throw new IllegalArgumentException("Invalid flight.rpc-headers entry (expected key:value): " + pair);
+            }
+            headers.put(pair.substring(0, idx).trim(), pair.substring(idx + 1).trim());
+        }
+        return headers.buildOrThrow();
+    }
+
+    public String getDefaultDatabase()
+    {
+        return defaultDatabase;
     }
 
     @Config("flight.default-database")
-    @ConfigDescription("Default database, sent as gRPC header 'database'")
+    @ConfigDescription("Default database name to advertise to the Flight SQL server (header)")
     public FlightSqlConfig setDefaultDatabase(String defaultDatabase)
     {
         this.defaultDatabase = defaultDatabase;
         return this;
     }
 
-    public Properties buildConnectionProperties()
+    public Dialect getDialect()
     {
-        Properties props = new Properties();
-        props.setProperty("useEncryption", Boolean.toString(useEncryption));
-        props.setProperty("useSystemTrustStore", Boolean.toString(useSystemTrustStore));
-        props.setProperty("disableCertificateVerification", Boolean.toString(disableCertificateVerification));
-        getTrustStorePath().ifPresent(v -> props.setProperty("trustStore", v));
-        getTrustStorePassword().ifPresent(v -> props.setProperty("trustStorePassword", v));
-        getToken().ifPresent(v -> props.setProperty("token", v));
-        getDefaultDatabase().ifPresent(v -> props.setProperty("database", v));
-        return props;
+        return dialect;
+    }
+
+    @Config("flight.dialect")
+    @ConfigDescription("Remote SQL dialect for catalog/schema/table discovery (duckdb or derby)")
+    public FlightSqlConfig setDialect(Dialect dialect)
+    {
+        this.dialect = dialect;
+        return this;
     }
 }

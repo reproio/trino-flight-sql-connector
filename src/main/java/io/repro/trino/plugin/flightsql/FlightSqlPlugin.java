@@ -1,12 +1,15 @@
 package io.repro.trino.plugin.flightsql;
 
-import io.trino.plugin.jdbc.JdbcPlugin;
+import com.google.common.collect.ImmutableList;
+import io.trino.spi.Plugin;
+import io.trino.spi.connector.ConnectorFactory;
 
 public class FlightSqlPlugin
-        extends JdbcPlugin
+        implements Plugin
 {
-    public FlightSqlPlugin()
+    @Override
+    public Iterable<ConnectorFactory> getConnectorFactories()
     {
-        super("flight_sql", FlightSqlClientModule::new);
+        return ImmutableList.of(new FlightSqlConnectorFactory());
     }
 }

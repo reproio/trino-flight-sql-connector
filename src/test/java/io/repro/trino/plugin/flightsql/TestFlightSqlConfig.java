@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Map;
 
+
 import static io.airlift.configuration.testing.ConfigAssertions.assertFullMapping;
 import static io.airlift.configuration.testing.ConfigAssertions.assertRecordedDefaults;
 import static io.airlift.configuration.testing.ConfigAssertions.recordDefaults;
@@ -15,36 +16,45 @@ class TestFlightSqlConfig
     void testDefaults()
     {
         assertRecordedDefaults(recordDefaults(FlightSqlConfig.class)
-                .setUseEncryption(true)
-                .setDisableCertificateVerification(false)
-                .setUseSystemTrustStore(false)
-                .setTrustStorePath(null)
-                .setTrustStorePassword(null)
-                .setToken(null)
-                .setDefaultDatabase(null));
+                .setUri(null)
+                .setUseEncryption(null)
+                .setTlsSkipVerify(false)
+                .setTlsTrustStorePath(null)
+                .setUsername(null)
+                .setPassword(null)
+                .setAuthorizationHeader(null)
+                .setRpcHeaders("")
+                .setDefaultDatabase(null)
+                .setDialect(FlightSqlConfig.Dialect.DUCKDB));
     }
 
     @Test
     void testExplicitPropertyMappings()
     {
         Map<String, String> properties = ImmutableMap.<String, String>builder()
-                .put("flight.use-encryption", "false")
-                .put("flight.disable-certificate-verification", "true")
-                .put("flight.use-system-trust-store", "true")
-                .put("flight.trust-store", "/etc/ssl/flight.jks")
-                .put("flight.trust-store-password", "trust-secret")
-                .put("flight.token", "bearer-token")
+                .put("flight.uri", "grpc+tls://flight.example:32010")
+                .put("flight.use-encryption", "true")
+                .put("flight.tls.skip-verify", "true")
+                .put("flight.tls.trust-store-path", "/etc/ssl/flight-ca.pem")
+                .put("flight.username", "admin")
+                .put("flight.password", "secret")
+                .put("flight.authorization-header", "Bearer xyz")
+                .put("flight.rpc-headers", "x-tenant:foo,x-debug:1")
                 .put("flight.default-database", "analytics")
+                .put("flight.dialect", "derby")
                 .buildOrThrow();
 
         FlightSqlConfig expected = new FlightSqlConfig()
-                .setUseEncryption(false)
-                .setDisableCertificateVerification(true)
-                .setUseSystemTrustStore(true)
-                .setTrustStorePath("/etc/ssl/flight.jks")
-                .setTrustStorePassword("trust-secret")
-                .setToken("bearer-token")
-                .setDefaultDatabase("analytics");
+                .setUri("grpc+tls://flight.example:32010")
+                .setUseEncryption(true)
+                .setTlsSkipVerify(true)
+                .setTlsTrustStorePath("/etc/ssl/flight-ca.pem")
+                .setUsername("admin")
+                .setPassword("secret")
+                .setAuthorizationHeader("Bearer xyz")
+                .setRpcHeaders("x-tenant:foo,x-debug:1")
+                .setDefaultDatabase("analytics")
+                .setDialect(FlightSqlConfig.Dialect.DERBY);
 
         assertFullMapping(properties, expected);
     }

@@ -20,15 +20,17 @@ dependencies {
     // provided: Trino エンジンが classpath に持っているため zip に同梱しない
     compileOnly(libs.trino.spi)
 
-    // プラグインに同梱
-    implementation(libs.trino.base.jdbc)
+    // プラグイン同梱
     implementation(libs.trino.plugin.toolkit)
-    implementation(libs.flight.sql.jdbc)
+    implementation(libs.adbc.core)
+    implementation(libs.adbc.driver.flight.sql)
+    implementation(libs.adbc.driver.manager)
+    implementation(libs.arrow.memory.core)
+    implementation(libs.arrow.memory.netty)
+    implementation(libs.arrow.vector)
 
     // tests
     testImplementation(libs.trino.spi)
-    testImplementation(libs.trino.base.jdbc)
-    testImplementation(variantOf(libs.trino.base.jdbc) { classifier("tests") })
     testImplementation(libs.trino.testing)
     testImplementation(libs.trino.main)
     testImplementation(libs.flight.sql)
@@ -47,10 +49,11 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
-    // Arrow / Flight が JDK 内部に reflective access するために必要
+    // ADBC / Arrow / Netty が JDK 内部に reflective access するために必要
     jvmArgs(
         "--add-opens=java.base/java.nio=ALL-UNNAMED",
         "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--add-opens=java.base/java.util=ALL-UNNAMED",
         "--sun-misc-unsafe-memory-access=allow",
     )
 }

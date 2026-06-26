@@ -1,30 +1,37 @@
 [versions]
 trino   = "476"
 arrow   = "19.0.0"
+adbc    = "0.23.0"
 junit   = "5.10.2"
 assertj = "3.25.3"
 
 [libraries]
+# Trino: SPI のみ provided。plugin-toolkit は Airlift bootstrap / configuration / json と Trino 内部ユーティリティを引くため残す。
 trino-spi             = { module = "io.trino:trino-spi",            version.ref = "trino" }
-trino-base-jdbc       = { module = "io.trino:trino-base-jdbc",      version.ref = "trino" }
 trino-plugin-toolkit  = { module = "io.trino:trino-plugin-toolkit", version.ref = "trino" }
 trino-testing         = { module = "io.trino:trino-testing",        version.ref = "trino" }
 trino-main            = { module = "io.trino:trino-main",           version.ref = "trino" }
 
-flight-sql-jdbc       = { module = "org.apache.arrow:flight-sql-jdbc-driver", version.ref = "arrow" }
-flight-sql            = { module = "org.apache.arrow:flight-sql",             version.ref = "arrow" }
+# ADBC: Flight SQL native driver + コア API
+adbc-core              = { module = "org.apache.arrow.adbc:adbc-core",              version.ref = "adbc" }
+adbc-driver-flight-sql = { module = "org.apache.arrow.adbc:adbc-driver-flight-sql", version.ref = "adbc" }
+adbc-driver-manager    = { module = "org.apache.arrow.adbc:adbc-driver-manager",    version.ref = "adbc" }
+
+# Arrow runtime (allocator / vector)。adbc-driver-flight-sql の transitive で入る想定だが明示する。
+arrow-memory-core      = { module = "org.apache.arrow:arrow-memory-core",   version.ref = "arrow" }
+arrow-memory-netty     = { module = "org.apache.arrow:arrow-memory-netty",  version.ref = "arrow" }
+arrow-vector           = { module = "org.apache.arrow:arrow-vector",        version.ref = "arrow" }
+
+# テスト用 FlightSqlExample (Derby バック) 一式。Maven test scope の transitive を Gradle は引かないので明示。
+flight-sql            = { module = "org.apache.arrow:flight-sql",          version.ref = "arrow" }
+derby                 = { module = "org.apache.derby:derby",               version = "10.15.2.0" }
+commons-dbcp2         = { module = "org.apache.commons:commons-dbcp2",     version = "2.14.0" }
+commons-pool2         = { module = "org.apache.commons:commons-pool2",     version = "2.13.1" }
+commons-text          = { module = "org.apache.commons:commons-text",      version = "1.15.0" }
+commons-cli           = { module = "commons-cli:commons-cli",              version = "1.11.0" }
+arrow-jdbc            = { module = "org.apache.arrow:arrow-jdbc",          version.ref = "arrow" }
 
 airlift-configuration-testing = { module = "io.airlift:configuration-testing", version = "336" }
-
-# FlightSqlExample (test server) の transitive 依存。
-# org.apache.arrow:flight-sql の test scope に書かれているが Gradle は test scope を引かないので明示する。
-derby            = { module = "org.apache.derby:derby",                version = "10.15.2.0" }
-commons-dbcp2    = { module = "org.apache.commons:commons-dbcp2",      version = "2.14.0" }
-commons-pool2    = { module = "org.apache.commons:commons-pool2",      version = "2.13.1" }
-commons-text     = { module = "org.apache.commons:commons-text",       version = "1.15.0" }
-commons-cli      = { module = "commons-cli:commons-cli",               version = "1.11.0" }
-arrow-jdbc       = { module = "org.apache.arrow:arrow-jdbc",           version.ref = "arrow" }
-
-junit-jupiter         = { module = "org.junit.jupiter:junit-jupiter",          version.ref = "junit" }
+junit-jupiter         = { module = "org.junit.jupiter:junit-jupiter",      version.ref = "junit" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
-assertj-core          = { module = "org.assertj:assertj-core",                 version.ref = "assertj" }
+assertj-core          = { module = "org.assertj:assertj-core",             version.ref = "assertj" }

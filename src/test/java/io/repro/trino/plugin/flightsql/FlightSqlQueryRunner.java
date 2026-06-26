@@ -18,13 +18,14 @@ public final class FlightSqlQueryRunner
         Session session = testSessionBuilder()
                 .setCatalog("flight")
                 .setSchema("app")
+                .setSystemProperty("query_max_planning_time", "30s")
                 .build();
         QueryRunner queryRunner = DistributedQueryRunner.builder(session).build();
         try {
             queryRunner.installPlugin(new FlightSqlPlugin());
             queryRunner.createCatalog("flight", "flight_sql", Map.of(
-                    "connection-url", "jdbc:flightsql://%s:%d/".formatted(server.getHost(), server.getPort()),
-                    "flight.use-encryption", "false"));
+                    "flight.uri", "grpc://%s:%d".formatted(server.getHost(), server.getPort()),
+                    "flight.dialect", "derby"));
             return queryRunner;
         }
         catch (Exception e) {

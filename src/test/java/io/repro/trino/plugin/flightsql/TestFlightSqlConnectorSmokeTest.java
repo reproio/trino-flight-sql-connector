@@ -39,6 +39,27 @@ class TestFlightSqlConnectorSmokeTest
     void showSchemas()
     {
         MaterializedResult result = queryRunner.execute("SHOW SCHEMAS FROM flight");
+        assertThat(result.getOnlyColumnAsSet()).contains("app");
+    }
+
+    @Test
+    void showTables()
+    {
+        MaterializedResult result = queryRunner.execute("SHOW TABLES FROM flight.app");
+        assertThat(result.getOnlyColumnAsSet()).contains("inttable");
+    }
+
+    @Test
+    void selectColumns()
+    {
+        MaterializedResult result = queryRunner.execute("SELECT id, value FROM flight.app.inttable");
         assertThat(result.getRowCount()).isGreaterThan(0);
+    }
+
+    @Test
+    void predicatePushdown()
+    {
+        MaterializedResult result = queryRunner.execute("SELECT value FROM flight.app.inttable WHERE id = 1");
+        assertThat(result.getRowCount()).isLessThanOrEqualTo(1);
     }
 }
