@@ -1,10 +1,15 @@
 plugins {
     `java-library`
     distribution
+    id("com.palantir.git-version") version "5.0.0"
 }
 
+val gitVersion: groovy.lang.Closure<String> by extra
+
 group = "io.repro.trino.plugin"
-version = "0.1.0-SNAPSHOT"
+// git tag から `git describe --tags --always --first-parent` 相当を引いてくる。
+// タグが無いリポジトリでは短い commit SHA が返る。
+version = gitVersion()
 
 java {
     toolchain {

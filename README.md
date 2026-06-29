@@ -68,8 +68,14 @@ JDK 24 が必要。
 
 ```bash
 ./gradlew test                # 単体テスト + Derby/FlightSqlExample スモーク
-./gradlew trinoPluginDistZip  # build/distributions/trino-flight-sql-0.1.0-SNAPSHOT.zip
+./gradlew trinoPluginDistZip  # build/distributions/trino-flight-sql-<gitVersion>.zip
 ```
+
+バージョンは `com.palantir.git-version` プラグインで git tag から取得する
+(`git describe --tags --always --first-parent` 相当)。タグが無いコミットの
+ビルドでは短い SHA、`v1.2.3` のような annotated tag を打ったコミットの
+ビルドではそのタグ名がそのままバージョンになる。working tree に
+uncommit な変更があるビルドは `<version>.dirty` というサフィックスが付く。
 
 生成された zip を Trino サーバの `$TRINO_HOME/` に展開すれば
 `$TRINO_HOME/plugin/flight-sql/` に必要 JAR が並ぶ。`trino-spi` は zip から
