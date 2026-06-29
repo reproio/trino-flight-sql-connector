@@ -17,6 +17,13 @@ repositories {
 }
 
 dependencies {
+    // Trino 476 (airbase 336) が classpath に持っている jackson のバージョンに揃える。
+    // com.fasterxml.jackson.annotation.* は Trino のプラグインクラスローダで
+    // parent-first のため、新しい jackson-databind を同梱すると JsonSerializeAs 等が
+    // 親側 (古い jackson-annotations) で解決できず NoClassDefFoundError になる。
+    // enforcedPlatform で BOM の version を強制 (annotations は 2.20, core/databind は 2.20.1)。
+    implementation(enforcedPlatform(libs.jackson.bom))
+
     // provided: Trino エンジンが classpath に持っているため zip に同梱しない
     compileOnly(libs.trino.spi)
 

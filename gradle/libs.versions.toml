@@ -2,6 +2,10 @@
 trino   = "476"
 arrow   = "19.0.0"
 adbc    = "0.23.0"
+# Must match the jackson version Trino 476 ships with (airbase 336 -> jackson 2.20.1).
+# com.fasterxml.jackson.annotation.* is parent-first in Trino's plugin classloader,
+# so a newer jackson-databind here would fail to find classes like JsonSerializeAs.
+jackson = "2.20.1"
 junit   = "5.10.2"
 assertj = "3.25.3"
 
@@ -9,6 +13,7 @@ assertj = "3.25.3"
 # Trino: SPI のみ provided。plugin-toolkit は Airlift bootstrap / configuration / json と Trino 内部ユーティリティを引くため残す。
 trino-spi             = { module = "io.trino:trino-spi",            version.ref = "trino" }
 trino-plugin-toolkit  = { module = "io.trino:trino-plugin-toolkit", version.ref = "trino" }
+jackson-bom           = { module = "com.fasterxml.jackson:jackson-bom", version.ref = "jackson" }
 trino-testing         = { module = "io.trino:trino-testing",        version.ref = "trino" }
 trino-main            = { module = "io.trino:trino-main",           version.ref = "trino" }
 
