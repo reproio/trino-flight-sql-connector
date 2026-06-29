@@ -76,6 +76,35 @@ JDK 24 が必要。
 意図的に除外しており、Trino 本体側 classpath に任せる (plugin classloader
 分離の維持のため)。
 
+## Trino サーバ側の必須 JVM 設定
+
+Arrow が gRPC レスポンスを `DirectByteBuffer` に詰める際、JDK 17+ では
+`sun.misc.Unsafe` ベースのメモリアクセスか、`DirectByteBuffer(long, int)`
+の非公開コンストラクタへのリフレクションが必要になる。JDK 24 以降は
+両方がデフォルトでブロックされており、何も設定しないと以下のような
+エラーで初回のメタデータクエリが失敗する:
+
+```
+FlightRuntimeException: Failed to read message.
+  Caused by: UnsupportedOperationException:
+    sun.misc.Unsafe or java.nio.DirectByteBuffer.<init>(long, int) not available
+      at org.apache.arrow.memory.util.MemoryUtil.directBuffer(...)
+      at org.apache.arrow.flight.ArrowMessage.frame(...)
+```
+
+**Trino クラスタの全ノード (coordinator + worker) の `$TRINO_HOME/etc/jvm.config`
+に以下を追記して再起動する必要がある:**
+
+```
+--sun-misc-unsafe-memory-access=allow
+--add-opens=java.base/java.nio=ALL-UNNAMED
+--add-opens=java.base/java.lang=ALL-UNNAMED
+--add-opens=java.base/java.util=ALL-UNNAMED
+```
+
+このオプションは本コネクタが同梱する Arrow / Netty が要求するもので、
+本リポジトリの `tasks.test` でも同じものを `jvmArgs` で渡している。
+
 ## カタログ設定
 
 `$TRINO_HOME/etc/catalog/flight.properties` の例:
@@ -181,10 +210,26 @@ EXPLAIN (TYPE DISTRIBUTED) SELECT * FROM flight.main.big_table;
 - **TestingFlightSqlServer は teardown でアロケータリーク警告を握りつぶす**:
   Apache Arrow 19.0.0 の `FlightSqlExample` 自体が稀にリークを残すが
   本コネクタの問題ではないため。
+- **`Memory was leaked by query. Memory leaked: (128)` WARN が時々出る**:
+  ADBC `FlightSqlConnection` が per-Location で `FlightSqlClient` を
+  Caffeine キャッシュ (`expireAfterAccess=5min`) しており、`AdbcConnection.close()`
+  か TTL 切れで evict されたタイミングで内部の `FlightClient` (Arrow Flight 18.x)
+  が小さなリーク (数十〜数百バイト) を検出する。Caffeine の removal listener が
+  ForkJoinPool 上で WARN を出すが、これは **クエリ実行結果には影響しない** ログノイズ。
+  Arrow Flight 側の挙動なのでコネクタ側で抑制する手段はない。エラーが本当に
+  気になる場合は logback/log4j で
+  `com.github.benmanes.caffeine.cache.BoundedLocalCache` の WARN を抑制する。
 - **JDK 24 reflective access**: ADBC + Arrow + Netty 経路で必要なため
-  `build.gradle.kts` の `tasks.test` で `--add-opens` を明示している。
-  プロダクションでは Trino 本体の JVM 起動オプションに同等のものが
-  必要 (Trino 476 のディストリビューションは標準で付与済み)。
+  `build.gradle.kts` の `tasks.test` で `--add-opens` / `--sun-misc-unsafe-memory-access=allow`
+  を明示している。プロダクションの Trino 側 `etc/jvm.config` にも
+  **同じものを追加する必要がある** (詳細は上の
+  「Trino サーバ側の必須 JVM 設定」セクション)。これらが無いと初回の
+  Flight RPC で `UnsupportedOperationException: sun.misc.Unsafe or
+  java.nio.DirectByteBuffer.<init>(long, int) not available` が
+  `FlightRuntimeException: Failed to read message` の cause として
+  発生する。なお同じ状況で suppressed 例外として `Memory was leaked
+  by query` が出るが、これは ArrowMessage 失敗時の child allocator が
+  中間状態で残るためで、Unsafe 問題が解決すれば一緒に消える。
 
 ## ロードマップ
 

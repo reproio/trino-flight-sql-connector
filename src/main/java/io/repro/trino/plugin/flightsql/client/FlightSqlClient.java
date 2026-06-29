@@ -140,16 +140,29 @@ public class FlightSqlClient
     /**
      * Returns the Arrow schema of a table via `SELECT * FROM schema.table WHERE 1=0`
      * (unquoted; rely on the backend's case-insensitive identifier parsing).
+     *
+     * Implemented with executeQuery + full drain (rather than executePartitioned)
+     * so the underlying Flight stream is consumed end-to-end and the internal
+     * FlightClient releases its response buffers. executePartitioned would hand us
+     * back partition descriptors we never read, which leaves the Flight response
+     * data dangling in the per-Location FlightSqlClient cache and surfaces later as
+     * the "Memory was leaked by query" WARN when Caffeine evicts the cache entry.
      */
     public Schema getTableSchema(String schemaName, String tableName)
             throws Exception
     {
         String sql = "SELECT * FROM " + schemaName + "." + tableName + " WHERE 1=0";
-        PartitionedExecuteResult result = executePartitioned(sql);
-        if (result.schema() == null) {
-            throw new IllegalStateException("Flight SQL server returned no schema for " + schemaName + "." + tableName);
+        try (PartitionReader pr = executeQuery(sql)) {
+            ArrowReader reader = pr.reader();
+            Schema schema = reader.getVectorSchemaRoot().getSchema();
+            while (reader.loadNextBatch()) {
+                // discard any (presumably zero) batches so the server-side stream completes
+            }
+            if (schema == null) {
+                throw new IllegalStateException("Flight SQL server returned no schema for " + schemaName + "." + tableName);
+            }
+            return schema;
         }
-        return result.schema();
     }
 
     public PartitionedExecuteResult executePartitioned(String sql)
