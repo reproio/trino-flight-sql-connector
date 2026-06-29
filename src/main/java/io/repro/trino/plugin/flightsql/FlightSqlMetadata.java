@@ -2,6 +2,7 @@ package io.repro.trino.plugin.flightsql;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import io.airlift.log.Logger;
 import io.repro.trino.plugin.flightsql.arrow.ArrowTypeMapper;
 import io.repro.trino.plugin.flightsql.client.FlightSqlClient;
 import io.repro.trino.plugin.flightsql.query.FlightSqlQueryBuilder;
@@ -41,6 +42,8 @@ import static java.util.Objects.requireNonNull;
 public class FlightSqlMetadata
         implements ConnectorMetadata
 {
+    private static final Logger LOG = Logger.get(FlightSqlMetadata.class);
+
     private final FlightSqlClient client;
     private final ArrowTypeMapper typeMapper;
     private final FlightSqlQueryBuilder queryBuilder;
@@ -201,7 +204,18 @@ public class FlightSqlMetadata
 
     public List<FlightSqlColumnHandle> readColumns(SchemaTableName tableName)
     {
-        return columnsCache.computeIfAbsent(tableName, this::loadColumns);
+        List<FlightSqlColumnHandle> cached = columnsCache.get(tableName);
+        if (cached != null) {
+            return cached;
+        }
+        List<FlightSqlColumnHandle> loaded = loadColumns(tableName);
+        // Cache only non-empty results so an empty Schema (likely a transient server issue or an
+        // ArrowTypeMapper miss for every field) is retried on subsequent calls instead of being
+        // memoised as "this table has no columns".
+        if (!loaded.isEmpty()) {
+            columnsCache.putIfAbsent(tableName, loaded);
+        }
+        return loaded;
     }
 
     private List<FlightSqlColumnHandle> loadColumns(SchemaTableName tableName)
@@ -213,14 +227,31 @@ public class FlightSqlMetadata
         catch (Exception e) {
             throw new TrinoException(GENERIC_INTERNAL_ERROR, "Failed to read schema for " + tableName + ": " + e.getMessage(), e);
         }
-        ImmutableList.Builder<FlightSqlColumnHandle> result = ImmutableList.builder();
+        if (schema.getFields().isEmpty()) {
+            LOG.warn("Flight SQL server returned an empty Arrow Schema for %s. "
+                    + "Either the server short-circuited the empty SELECT (FlightInfo.schema not populated AND no DoGet) "
+                    + "or our SELECT * WHERE 1=0 probe is being optimised away.", tableName);
+            return List.of();
+        }
+        ImmutableList.Builder<FlightSqlColumnHandle> mapped = ImmutableList.builder();
+        java.util.List<String> skipped = new java.util.ArrayList<>();
         for (Field field : schema.getFields()) {
             Optional<Type> trinoType = typeMapper.toTrinoType(field);
             if (trinoType.isEmpty()) {
+                skipped.add(field.getName() + ":" + field.getType());
                 continue;
             }
-            result.add(new FlightSqlColumnHandle(field.getName().toLowerCase(), trinoType.get()));
+            mapped.add(new FlightSqlColumnHandle(field.getName().toLowerCase(), trinoType.get()));
         }
-        return result.build();
+        List<FlightSqlColumnHandle> result = mapped.build();
+        if (!skipped.isEmpty()) {
+            LOG.warn("Skipped %d column(s) for %s with Arrow types unsupported by ArrowTypeMapper: %s",
+                    skipped.size(), tableName, skipped);
+        }
+        if (result.isEmpty() && !schema.getFields().isEmpty()) {
+            LOG.warn("All %d columns of %s were dropped due to unsupported Arrow types; "
+                    + "DESC will return an empty column list.", schema.getFields().size(), tableName);
+        }
+        return result;
     }
 }
