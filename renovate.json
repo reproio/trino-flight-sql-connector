@@ -1,0 +1,52 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "hostRules": [
+    {
+      "matchHost": "maven.pkg.github.com",
+      "hostType": "maven",
+      "token": "{{ secrets.GITHUB_PACKAGES_TOKEN }}"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchUpdateTypes": ["patch", "pin", "digest"],
+      "automerge": true,
+      "groupName": "all non-major patch updates"
+    },
+    {
+      "matchCategories": ["java"],
+      "matchPackagePatterns": ["trino"],
+      "enabled": false
+    },
+    {
+      "matchCategories": ["java"],
+      "allowedVersions": "/^[0-9]+\\.[0-9]+(\\.[0-9]+){0,3}(-jre)?$/"
+    },
+    {
+      "matchCategories": ["java"],
+      "excludePackagePatterns": ["trino"],
+      "matchUpdateTypes": ["patch", "pin", "digest"],
+      "automerge": true,
+      "groupName": "java patch updates"
+    },
+    {
+      "matchCategories": ["java"],
+      "excludePackagePatterns": ["trino"],
+      "matchUpdateTypes": ["minor"],
+      "groupName": "java minor updates"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["major", "minor", "patch", "pin", "digest"],
+      "automerge": true,
+      "groupName": "github-actions updates"
+    },
+    {
+      "matchManagers": ["gradle-wrapper"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true,
+      "groupName": "gradle updates"
+    }
+  ]
+}
