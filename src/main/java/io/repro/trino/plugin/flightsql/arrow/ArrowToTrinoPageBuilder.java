@@ -6,6 +6,12 @@ import io.trino.spi.PageBuilder;
 import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.type.DecimalType;
 import io.trino.spi.type.Decimals;
+import io.trino.spi.type.LongTimestamp;
+import io.trino.spi.type.LongTimestampWithTimeZone;
+import io.trino.spi.type.TimeType;
+import io.trino.spi.type.TimeZoneKey;
+import io.trino.spi.type.TimestampType;
+import io.trino.spi.type.TimestampWithTimeZoneType;
 import io.trino.spi.type.Type;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
@@ -17,24 +23,24 @@ import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.SmallIntVector;
-import org.apache.arrow.vector.TimeStampMicroTZVector;
-import org.apache.arrow.vector.TimeStampMicroVector;
-import org.apache.arrow.vector.TimeStampMilliTZVector;
-import org.apache.arrow.vector.TimeStampMilliVector;
-import org.apache.arrow.vector.TimeStampNanoTZVector;
-import org.apache.arrow.vector.TimeStampNanoVector;
-import org.apache.arrow.vector.TimeStampSecTZVector;
-import org.apache.arrow.vector.TimeStampSecVector;
+import org.apache.arrow.vector.TimeMicroVector;
+import org.apache.arrow.vector.TimeMilliVector;
+import org.apache.arrow.vector.TimeNanoVector;
+import org.apache.arrow.vector.TimeSecVector;
+import org.apache.arrow.vector.TimeStampVector;
 import org.apache.arrow.vector.TinyIntVector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.TimeUnit;
+import org.apache.arrow.vector.types.pojo.ArrowType;
 
 import java.math.BigInteger;
 import java.util.List;
 
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.BooleanType.BOOLEAN;
+import static io.trino.spi.type.DateTimeEncoding.packDateTimeWithZone;
 import static io.trino.spi.type.DateType.DATE;
 import static io.trino.spi.type.DoubleType.DOUBLE;
 import static io.trino.spi.type.IntegerType.INTEGER;
@@ -238,16 +244,58 @@ public class ArrowToTrinoPageBuilder
                 return;
             }
         }
-        // Timestamp without TZ -> long microseconds for short timestamps (precision <= 6)
-        if (type instanceof io.trino.spi.type.TimestampType tsType && !tsType.isShort() == false) {
-            // short timestamp
-            long[] micros = readTimestampMicros(vector, rowCount);
+        if (type instanceof TimeType timeType) {
             for (int i = 0; i < rowCount; i++) {
                 if (vector.isNull(i)) {
                     blockBuilder.appendNull();
                 }
                 else {
-                    tsType.writeLong(blockBuilder, micros[i]);
+                    timeType.writeLong(blockBuilder, timePicos(vector, i));
+                }
+            }
+            return;
+        }
+        if (type instanceof TimestampType timestampType) {
+            TimeStampVector timestampVector = asTimestampVector(vector);
+            TimeUnit unit = timestampUnit(timestampVector);
+            for (int i = 0; i < rowCount; i++) {
+                if (timestampVector.isNull(i)) {
+                    blockBuilder.appendNull();
+                    continue;
+                }
+                long value = timestampVector.get(i);
+                if (timestampType.isShort()) {
+                    timestampType.writeLong(blockBuilder, toEpochMicros(value, unit));
+                }
+                else {
+                    int picosOfMicro = unit == TimeUnit.NANOSECOND ? (int) Math.floorMod(value, 1_000L) * 1_000 : 0;
+                    timestampType.writeObject(blockBuilder, new LongTimestamp(toEpochMicros(value, unit), picosOfMicro));
+                }
+            }
+            return;
+        }
+        if (type instanceof TimestampWithTimeZoneType timestampTzType) {
+            TimeStampVector timestampVector = asTimestampVector(vector);
+            TimeUnit unit = timestampUnit(timestampVector);
+            TimeZoneKey zoneKey = timeZoneKey(timestampVector);
+            for (int i = 0; i < rowCount; i++) {
+                if (timestampVector.isNull(i)) {
+                    blockBuilder.appendNull();
+                    continue;
+                }
+                long value = timestampVector.get(i);
+                long epochMillis = toEpochMillis(value, unit);
+                if (timestampTzType.isShort()) {
+                    timestampTzType.writeLong(blockBuilder, packDateTimeWithZone(epochMillis, zoneKey));
+                }
+                else {
+                    int picosOfMilli = switch (unit) {
+                        case SECOND, MILLISECOND -> 0;
+                        case MICROSECOND -> (int) Math.floorMod(value, 1_000L) * 1_000_000;
+                        case NANOSECOND -> (int) Math.floorMod(value, 1_000_000L) * 1_000;
+                    };
+                    timestampTzType.writeObject(blockBuilder,
+                            LongTimestampWithTimeZone.fromEpochMillisAndFraction(epochMillis, picosOfMilli, zoneKey));
                 }
             }
             return;
@@ -255,52 +303,63 @@ public class ArrowToTrinoPageBuilder
         throw new UnsupportedOperationException("Unsupported Trino type for Arrow conversion: " + type);
     }
 
-    private static long[] readTimestampMicros(FieldVector vector, int rowCount)
+    // Trino TIME(p) values are picoseconds of day
+    private static long timePicos(FieldVector vector, int index)
     {
-        long[] out = new long[rowCount];
-        if (vector instanceof TimeStampSecVector v) {
-            for (int i = 0; i < rowCount; i++) {
-                out[i] = v.isNull(i) ? 0L : v.get(i) * 1_000_000L;
-            }
+        if (vector instanceof TimeSecVector v) {
+            return v.get(index) * 1_000_000_000_000L;
         }
-        else if (vector instanceof TimeStampMilliVector v) {
-            for (int i = 0; i < rowCount; i++) {
-                out[i] = v.isNull(i) ? 0L : v.get(i) * 1_000L;
-            }
+        if (vector instanceof TimeMilliVector v) {
+            return v.get(index) * 1_000_000_000L;
         }
-        else if (vector instanceof TimeStampMicroVector v) {
-            for (int i = 0; i < rowCount; i++) {
-                out[i] = v.isNull(i) ? 0L : v.get(i);
-            }
+        if (vector instanceof TimeMicroVector v) {
+            return v.get(index) * 1_000_000L;
         }
-        else if (vector instanceof TimeStampNanoVector v) {
-            for (int i = 0; i < rowCount; i++) {
-                out[i] = v.isNull(i) ? 0L : v.get(i) / 1_000L;
-            }
+        if (vector instanceof TimeNanoVector v) {
+            return v.get(index) * 1_000L;
         }
-        else if (vector instanceof TimeStampSecTZVector v) {
-            for (int i = 0; i < rowCount; i++) {
-                out[i] = v.isNull(i) ? 0L : v.get(i) * 1_000_000L;
-            }
+        throw new IllegalArgumentException("Unsupported time vector type: " + vector.getClass());
+    }
+
+    private static TimeStampVector asTimestampVector(FieldVector vector)
+    {
+        if (vector instanceof TimeStampVector timestampVector) {
+            return timestampVector;
         }
-        else if (vector instanceof TimeStampMilliTZVector v) {
-            for (int i = 0; i < rowCount; i++) {
-                out[i] = v.isNull(i) ? 0L : v.get(i) * 1_000L;
-            }
+        throw new IllegalArgumentException("Unsupported timestamp vector type: " + vector.getClass());
+    }
+
+    private static TimeUnit timestampUnit(TimeStampVector vector)
+    {
+        return ((ArrowType.Timestamp) vector.getField().getType()).getUnit();
+    }
+
+    private static TimeZoneKey timeZoneKey(TimeStampVector vector)
+    {
+        String timezone = ((ArrowType.Timestamp) vector.getField().getType()).getTimezone();
+        if (timezone == null || timezone.isEmpty()) {
+            return TimeZoneKey.UTC_KEY;
         }
-        else if (vector instanceof TimeStampMicroTZVector v) {
-            for (int i = 0; i < rowCount; i++) {
-                out[i] = v.isNull(i) ? 0L : v.get(i);
-            }
-        }
-        else if (vector instanceof TimeStampNanoTZVector v) {
-            for (int i = 0; i < rowCount; i++) {
-                out[i] = v.isNull(i) ? 0L : v.get(i) / 1_000L;
-            }
-        }
-        else {
-            throw new IllegalArgumentException("Unsupported timestamp vector type: " + vector.getClass());
-        }
-        return out;
+        return TimeZoneKey.getTimeZoneKey(timezone);
+    }
+
+    private static long toEpochMicros(long value, TimeUnit unit)
+    {
+        return switch (unit) {
+            case SECOND -> value * 1_000_000L;
+            case MILLISECOND -> value * 1_000L;
+            case MICROSECOND -> value;
+            case NANOSECOND -> Math.floorDiv(value, 1_000L);
+        };
+    }
+
+    private static long toEpochMillis(long value, TimeUnit unit)
+    {
+        return switch (unit) {
+            case SECOND -> value * 1_000L;
+            case MILLISECOND -> value;
+            case MICROSECOND -> Math.floorDiv(value, 1_000L);
+            case NANOSECOND -> Math.floorDiv(value, 1_000_000L);
+        };
     }
 }
