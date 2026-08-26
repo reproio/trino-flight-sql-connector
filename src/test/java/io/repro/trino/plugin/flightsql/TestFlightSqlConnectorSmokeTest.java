@@ -7,6 +7,10 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -76,5 +80,32 @@ class TestFlightSqlConnectorSmokeTest
     {
         MaterializedResult result = queryRunner.execute("SELECT count(*) FROM flight.app.inttable WHERE id = 1");
         assertThat((long) result.getOnlyValue()).isLessThanOrEqualTo(1L);
+    }
+
+    @Test
+    void selectTimeColumn()
+    {
+        // Derby TIME maps to Arrow Time32(MILLISECOND) -> Trino TIME(3)
+        MaterializedResult result = queryRunner.execute("SELECT t FROM flight.app.timetable WHERE id = 1");
+        assertThat(result.getOnlyValue()).isEqualTo(LocalTime.of(12, 34, 56));
+    }
+
+    @Test
+    void selectTimestampColumn()
+    {
+        // FlightSqlExample converts JDBC results with a UTC calendar, so Derby TIMESTAMP maps to
+        // Arrow Timestamp(MILLISECOND, "UTC") -> Trino TIMESTAMP(3) WITH TIME ZONE
+        MaterializedResult result = queryRunner.execute("SELECT ts FROM flight.app.timetable WHERE id = 1");
+        assertThat(result.getOnlyValue())
+                .isEqualTo(ZonedDateTime.of(2024, 1, 2, 3, 4, 5, 123_000_000, ZoneId.of("UTC")));
+    }
+
+    @Test
+    void selectNullTemporalValues()
+    {
+        MaterializedResult result = queryRunner.execute("SELECT t, ts FROM flight.app.timetable WHERE id = 2");
+        assertThat(result.getRowCount()).isEqualTo(1);
+        assertThat(result.getMaterializedRows().get(0).getField(0)).isNull();
+        assertThat(result.getMaterializedRows().get(0).getField(1)).isNull();
     }
 }

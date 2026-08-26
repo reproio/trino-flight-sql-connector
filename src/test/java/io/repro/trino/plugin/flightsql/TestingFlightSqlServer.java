@@ -9,6 +9,9 @@ import org.apache.arrow.memory.RootAllocator;
 import java.io.Closeable;
 import java.io.IOException;
 import java.net.ServerSocket;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.Statement;
 
 public class TestingFlightSqlServer
         implements Closeable
@@ -29,6 +32,19 @@ public class TestingFlightSqlServer
         this.producer = new FlightSqlExample(location, FlightSqlExample.DB_NAME);
         this.server = FlightServer.builder(allocator, location, producer).build();
         this.server.start();
+        seedTemporalTable();
+    }
+
+    // FlightSqlExample seeds intTable/foreignTable only; add a table with temporal columns
+    // through a second embedded-Derby connection to the same database.
+    private static void seedTemporalTable()
+            throws Exception
+    {
+        try (Connection connection = DriverManager.getConnection("jdbc:derby:target/" + FlightSqlExample.DB_NAME);
+                Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE timeTable (id INT NOT NULL PRIMARY KEY, t TIME, ts TIMESTAMP)");
+            statement.execute("INSERT INTO timeTable VALUES (1, '12:34:56', '2024-01-02 03:04:05.123'), (2, NULL, NULL)");
+        }
     }
 
     public String getHost()
