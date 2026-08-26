@@ -77,9 +77,11 @@ public class FlightSqlSplitManager
 
     private static void verifySchema(List<Field> arrowFields, List<FlightSqlColumnHandle> columns)
     {
-        if (arrowFields.size() != columns.size()) {
+        // With an empty projection (e.g. COUNT(*)) the QueryBuilder emits a dummy "SELECT 1", so the result always has one column
+        int expected = columns.isEmpty() ? 1 : columns.size();
+        if (arrowFields.size() != expected) {
             throw new TrinoException(GENERIC_INTERNAL_ERROR,
-                    "Flight SQL result column count " + arrowFields.size() + " does not match planned " + columns.size());
+                    "Flight SQL result column count " + arrowFields.size() + " does not match planned " + expected);
         }
     }
 
