@@ -1,27 +1,29 @@
 # trino-flight-sql-connector
 
-Trino 476 から Apache Arrow ADBC の Flight SQL ドライバを経由して、
-任意の Flight SQL Server (DuckDB / SQLite / Dremio / Spice / 自作 producer 等)
-にアクセスするためのコネクタ。
+A Trino 476 connector that talks to any Flight SQL Server (DuckDB / SQLite /
+Dremio / Spice / your own producer) through the Apache Arrow ADBC Flight SQL
+driver.
 
-Arrow を end-to-end で運ぶ native connector として実装されており、
-Flight SQL の partition 概念をそのまま Trino split として扱うことで、
-サーバが申告した endpoint 数だけ並列に読み出す。
+It is implemented as a native connector that carries Arrow end to end, and it
+maps the Flight SQL partition concept directly onto Trino splits, so reads fan
+out across exactly as many endpoints as the server advertises.
 
-> **状態**: MVP (Domain pushdown + projection pushdown + endpoint 並列読み)。
-> プロダクション利用ではなく、検証用途。
+> **Status**: MVP (Domain pushdown + projection pushdown + parallel endpoint
+> reads). Intended for experimentation, not production use.
 
-## 動作環境
+日本語版の README は [README-ja.md](README-ja.md) にあります。
 
-| 項目 | バージョン |
+## Requirements
+
+| Item | Version |
 |---|---|
 | Trino | 476 |
-| JDK | 24 (Trino 476 の要件) |
+| JDK | 24 (required by Trino 476) |
 | Arrow Java | 19.0.0 |
 | ADBC | 0.23.0 |
-| Gradle | 9.x (wrapper 同梱) |
+| Gradle | 9.x (wrapper included) |
 
-## アーキテクチャ概要
+## Architecture
 
 ```
 Trino Coordinator                                Flight SQL Server
@@ -46,49 +48,50 @@ Trino Worker
 └─────────────────────────────┘
 ```
 
-- **Metadata**: 方言 (`flight.dialect=duckdb|derby`) ごとに `information_schema` /
-  `SYS.SYSSCHEMAS` 等を `executeQuery` で叩いてスキーマ/テーブル一覧を取る。
-  列スキーマは `SELECT * FROM s.t WHERE 1=0` の `executePartitioned` 結果の
-  Arrow Schema を流用 (ADBC の `getTableSchema` は Flight SQL 実装が
-  `NOT_IMPLEMENTED` のため使えない)。
-- **Pushdown**: `FlightSqlQueryBuilder` が `TupleDomain` → `WHERE` 句を構築
-  (Domain pushdown)、`projectedColumns` から `SELECT` リストを構築
-  (projection pushdown)。サポート外の domain は `remainingFilter` として
-  Trino 側に戻す。
-- **Split**: ADBC `AdbcStatement.executePartitioned()` が返す
-  `PartitionDescriptor` (= Flight SQL の `FlightEndpoint` 相当) 1 つを
-  1 Trino split に対応付ける。worker は自分が割り当てられた descriptor を
-  `AdbcConnection.readPartition(ByteBuffer)` で fetch する。
-- **Arrow → Trino Page**: `ArrowToTrinoPageBuilder` が型ごとに専用ループで
-  `FieldVector` → `Block` 変換 (JDBC `ResultSet` を経由しない)。
+- **Metadata**: schema and table listings are obtained with `executeQuery`
+  against dialect-specific catalogs (`information_schema`, `SYS.SYSSCHEMAS`,
+  …) selected by `flight.dialect=duckdb|derby`. Column schemas are taken from
+  the Arrow Schema returned by `executePartitioned` on
+  `SELECT * FROM s.t WHERE 1=0`, because ADBC's `getTableSchema` reports
+  `NOT_IMPLEMENTED` on the Flight SQL implementations tested.
+- **Pushdown**: `FlightSqlQueryBuilder` turns a `TupleDomain` into a `WHERE`
+  clause (domain pushdown) and `projectedColumns` into a `SELECT` list
+  (projection pushdown). Unsupported domains are handed back to Trino as
+  `remainingFilter`.
+- **Split**: each `PartitionDescriptor` (the ADBC equivalent of a Flight SQL
+  `FlightEndpoint`) returned by `AdbcStatement.executePartitioned()` becomes one
+  Trino split. A worker fetches the descriptor it was assigned via
+  `AdbcConnection.readPartition(ByteBuffer)`.
+- **Arrow → Trino Page**: `ArrowToTrinoPageBuilder` converts `FieldVector` to
+  `Block` with a dedicated loop per type — no JDBC `ResultSet` in the path.
 
-## ビルド
+## Building
 
-JDK 24 が必要。
+JDK 24 is required.
 
 ```bash
-./gradlew test                # 単体テスト + Derby/FlightSqlExample スモーク
+./gradlew test                # unit tests + Derby/FlightSqlExample smoke test
 ./gradlew trinoPluginDistZip  # build/distributions/trino-flight-sql-<gitVersion>.zip
 ```
 
-バージョンは `com.palantir.git-version` プラグインで git tag から取得する
-(`git describe --tags --always --first-parent` 相当)。タグが無いコミットの
-ビルドでは短い SHA、`v1.2.3` のような annotated tag を打ったコミットの
-ビルドではそのタグ名がそのままバージョンになる。working tree に
-uncommit な変更があるビルドは `<version>.dirty` というサフィックスが付く。
+The version comes from git tags via the `com.palantir.git-version` plugin
+(equivalent to `git describe --tags --always --first-parent`). A commit without
+a tag builds as a short SHA; a commit carrying an annotated tag such as
+`v1.2.3` builds under that tag name. Builds made with uncommitted changes in
+the working tree get a `.dirty` suffix.
 
-生成された zip を Trino サーバの `$TRINO_HOME/` に展開すれば
-`$TRINO_HOME/plugin/flight-sql/` に必要 JAR が並ぶ。`trino-spi` は zip から
-意図的に除外しており、Trino 本体側 classpath に任せる (plugin classloader
-分離の維持のため)。
+Unpacking the generated zip into `$TRINO_HOME/` lays the required JARs down
+under `$TRINO_HOME/plugin/flight-sql/`. `trino-spi` is deliberately excluded
+from the zip and left to the Trino classpath, to preserve plugin classloader
+isolation.
 
-## Trino サーバ側の必須 JVM 設定
+## Required JVM settings on the Trino server
 
-Arrow が gRPC レスポンスを `DirectByteBuffer` に詰める際、JDK 17+ では
-`sun.misc.Unsafe` ベースのメモリアクセスか、`DirectByteBuffer(long, int)`
-の非公開コンストラクタへのリフレクションが必要になる。JDK 24 以降は
-両方がデフォルトでブロックされており、何も設定しないと以下のような
-エラーで初回のメタデータクエリが失敗する:
+When Arrow puts a gRPC response into a `DirectByteBuffer`, it needs either
+`sun.misc.Unsafe`-based memory access or reflective access to the private
+`DirectByteBuffer(long, int)` constructor. As of JDK 24 both are blocked by
+default, so without extra configuration the very first metadata query fails
+like this:
 
 ```
 FlightRuntimeException: Failed to read message.
@@ -98,8 +101,8 @@ FlightRuntimeException: Failed to read message.
       at org.apache.arrow.flight.ArrowMessage.frame(...)
 ```
 
-**Trino クラスタの全ノード (coordinator + worker) の `$TRINO_HOME/etc/jvm.config`
-に以下を追記して再起動する必要がある:**
+**Add the following to `$TRINO_HOME/etc/jvm.config` on every node of the Trino
+cluster (coordinator and workers) and restart:**
 
 ```
 --sun-misc-unsafe-memory-access=allow
@@ -108,80 +111,80 @@ FlightRuntimeException: Failed to read message.
 --add-opens=java.base/java.util=ALL-UNNAMED
 ```
 
-このオプションは本コネクタが同梱する Arrow / Netty が要求するもので、
-本リポジトリの `tasks.test` でも同じものを `jvmArgs` で渡している。
+These options are required by the Arrow / Netty stack bundled with this
+connector; `tasks.test` in this repository passes the same set through
+`jvmArgs`.
 
-## カタログ設定
+## Catalog configuration
 
-`$TRINO_HOME/etc/catalog/flight.properties` の例:
+Example `$TRINO_HOME/etc/catalog/flight.properties`:
 
 ```properties
 connector.name=flight_sql
 
-# 接続先 Flight SQL Server
+# Flight SQL Server to connect to
 flight.uri=grpc://localhost:32010
-# flight.uri=grpc+tls://flight.example.com:32010   # TLS 経由
+# flight.uri=grpc+tls://flight.example.com:32010   # over TLS
 
-# メタデータ取得用 SQL の方言 (現在は duckdb / derby)
+# SQL dialect used for metadata queries (currently duckdb / derby)
 flight.dialect=duckdb
 
-# 任意: TLS 設定
+# Optional: TLS settings
 # flight.tls.skip-verify=false
 # flight.tls.trust-store-path=/etc/ssl/flight-ca.pem
 
-# 任意: 認証
+# Optional: authentication
 # flight.username=admin
 # flight.password=secret
-# flight.authorization-header=Bearer eyJhbGc...   # 上の user/pass と排他で使う想定
+# flight.authorization-header=Bearer eyJhbGc...   # meant to be exclusive with user/pass above
 
-# 任意: gRPC ヘッダ追加 (comma 区切り、key:value)
+# Optional: extra gRPC headers (comma separated, key:value)
 # flight.rpc-headers=x-tenant:foo,x-debug:1
 
-# 任意: 一部サーバが見る database ヘッダ
+# Optional: database header honored by some servers
 # flight.default-database=mydb
 ```
 
-### 設定キー一覧
+### Configuration properties
 
-| Key | 型 | デフォルト | 説明 |
+| Key | Type | Default | Description |
 |---|---|---|---|
-| `flight.uri` | string | (必須) | `grpc://host:port` か `grpc+tls://host:port` |
-| `flight.dialect` | enum | `DUCKDB` | メタデータ取得 SQL の方言。`DUCKDB` / `DERBY` |
-| `flight.use-encryption` | boolean | (URI 由来) | 明示的に TLS を有効/無効化 |
-| `flight.tls.skip-verify` | boolean | `false` | TLS 証明書検証スキップ (dev/test) |
-| `flight.tls.trust-store-path` | string | null | PEM 形式 CA バンドル |
-| `flight.username` | string | null | basic 認証ユーザ |
-| `flight.password` | string | null | basic 認証パスワード (秘匿) |
-| `flight.authorization-header` | string | null | 任意の `Authorization` ヘッダ値 (秘匿) |
-| `flight.rpc-headers` | string | `""` | 追加 gRPC ヘッダ、`k:v,k:v` 形式 |
-| `flight.default-database` | string | null | gRPC `database` ヘッダ |
+| `flight.uri` | string | (required) | `grpc://host:port` or `grpc+tls://host:port` |
+| `flight.dialect` | enum | `DUCKDB` | SQL dialect for metadata queries: `DUCKDB` / `DERBY` |
+| `flight.use-encryption` | boolean | (derived from URI) | Explicitly enable/disable TLS |
+| `flight.tls.skip-verify` | boolean | `false` | Skip TLS certificate verification (dev/test) |
+| `flight.tls.trust-store-path` | string | null | CA bundle in PEM format |
+| `flight.username` | string | null | Basic auth user |
+| `flight.password` | string | null | Basic auth password (secret) |
+| `flight.authorization-header` | string | null | Raw `Authorization` header value (secret) |
+| `flight.rpc-headers` | string | `""` | Additional gRPC headers in `k:v,k:v` form |
+| `flight.default-database` | string | null | gRPC `database` header |
 
-## 動作確認
+## Trying it out
 
-DuckDB Flight SQL Server を別途用意した上で:
+With a DuckDB Flight SQL Server running separately:
 
 ```sql
 SHOW SCHEMAS FROM flight;
 SHOW TABLES FROM flight.main;
 SELECT col1, col2 FROM flight.main.some_table WHERE col1 > 10;
 
--- pushdown が効いていることを確認
+-- confirm that pushdown is applied
 EXPLAIN SELECT col1 FROM flight.main.some_table WHERE col1 > 10;
 
--- partition 数 = split 数を確認
+-- confirm that split count matches partition count
 EXPLAIN (TYPE DISTRIBUTED) SELECT * FROM flight.main.big_table;
 ```
 
-リポジトリ内蔵のテストは Apache Arrow Java の `FlightSqlExample`
-(Derby バック) を `@BeforeAll` で立ち上げ、`flight.dialect=derby` を
-設定して以下のクエリを検証する:
+The in-repo tests start Apache Arrow Java's `FlightSqlExample` (backed by
+Derby) in `@BeforeAll`, set `flight.dialect=derby`, and verify:
 
-- `SHOW SCHEMAS FROM flight` → `app` を含む
-- `SHOW TABLES FROM flight.app` → `inttable` を含む
-- `SELECT id, value FROM flight.app.inttable` → 1 行以上 (projection pushdown)
-- `SELECT value FROM flight.app.inttable WHERE id = 1` (Domain pushdown)
+- `SHOW SCHEMAS FROM flight` → contains `app`
+- `SHOW TABLES FROM flight.app` → contains `inttable`
+- `SELECT id, value FROM flight.app.inttable` → at least one row (projection pushdown)
+- `SELECT value FROM flight.app.inttable WHERE id = 1` (domain pushdown)
 
-## サポートしている型 (MVP)
+## Supported types (MVP)
 
 | Arrow Type | Trino Type |
 |---|---|
@@ -196,66 +199,58 @@ EXPLAIN (TYPE DISTRIBUTED) SELECT * FROM flight.main.big_table;
 | `Timestamp(unit, tz=null)` | `TIMESTAMP(p)` |
 | `Timestamp(unit, tz!=null)` | `TIMESTAMP(p) WITH TIME ZONE` |
 
-未対応の Arrow 型 (List / Struct / Map / Union / 符号なし整数) は
-`getColumnHandles` でスキップされる。
+Unsupported Arrow types (List / Struct / Map / Union / unsigned integers) are
+skipped in `getColumnHandles`.
 
-## 制約 / 既知の問題
+## Limitations / known issues
 
-- **識別子は全部 lowercase**: Trino の識別子 case-folding に合わせて、
-  schema / table / column を lower-case 化して扱う。SQL は無クオートで
-  発行するため、Derby は parser が大文字化、DuckDB / PostgreSQL は
-  lowercase 一致でいずれも動く。**mixed-case の識別子 (例: `MyTable`) は
-  MVP では非サポート**。
-- **メタデータは方言依存の SQL**: ADBC の `getObjects` / `getTableSchema` が
-  少なくとも `FlightSqlExample` / 一部の実装で空・未実装のため、SQL で
-  代替している。`flight.dialect` が `duckdb` / `derby` 以外には現状非対応。
-- **predicate pushdown**: `boolean`, `tinyint/smallint/integer/bigint`,
-  `real/double`, `decimal`, `varchar`, `date` のみ。`LIKE` / 関数呼び出し /
-  複雑式は MVP 範囲外 (Phase 3 で実装予定)。
-- **read-only**: INSERT / UPDATE / DELETE / ADBC `bulkIngest` は未実装。
-- **TestingFlightSqlServer は teardown でアロケータリーク警告を握りつぶす**:
-  Apache Arrow 19.0.0 の `FlightSqlExample` 自体が稀にリークを残すが
-  本コネクタの問題ではないため。
-- **`Memory was leaked by query. Memory leaked: (128)` WARN が時々出る**:
-  ADBC `FlightSqlConnection` が per-Location で `FlightSqlClient` を
-  Caffeine キャッシュ (`expireAfterAccess=5min`) しており、`AdbcConnection.close()`
-  か TTL 切れで evict されたタイミングで内部の `FlightClient` (Arrow Flight 18.x)
-  が小さなリーク (数十〜数百バイト) を検出する。Caffeine の removal listener が
-  ForkJoinPool 上で WARN を出すが、これは **クエリ実行結果には影響しない** ログノイズ。
-  Arrow Flight 側の挙動なのでコネクタ側で抑制する手段はない。エラーが本当に
-  気になる場合は logback/log4j で
-  `com.github.benmanes.caffeine.cache.BoundedLocalCache` の WARN を抑制する。
-- **JDK 24 reflective access**: ADBC + Arrow + Netty 経路で必要なため
-  `build.gradle.kts` の `tasks.test` で `--add-opens` / `--sun-misc-unsafe-memory-access=allow`
-  を明示している。プロダクションの Trino 側 `etc/jvm.config` にも
-  **同じものを追加する必要がある** (詳細は上の
-  「Trino サーバ側の必須 JVM 設定」セクション)。これらが無いと初回の
-  Flight RPC で `UnsupportedOperationException: sun.misc.Unsafe or
-  java.nio.DirectByteBuffer.<init>(long, int) not available` が
-  `FlightRuntimeException: Failed to read message` の cause として
-  発生する。なお同じ状況で suppressed 例外として `Memory was leaked
-  by query` が出るが、これは ArrowMessage 失敗時の child allocator が
-  中間状態で残るためで、Unsafe 問題が解決すれば一緒に消える。
+- **Identifiers are all lowercased**: to match Trino's identifier case folding,
+  schema / table / column names are lowercased. SQL is emitted unquoted, which
+  works both for Derby (whose parser upcases) and for DuckDB / PostgreSQL
+  (which match lowercase). **Mixed-case identifiers (e.g. `MyTable`) are not
+  supported in the MVP.**
+- **Metadata relies on dialect-specific SQL**: ADBC's `getObjects` /
+  `getTableSchema` return empty or unimplemented results on at least
+  `FlightSqlExample` and some other implementations, so SQL is used instead.
+  Dialects other than `duckdb` / `derby` are currently unsupported.
+- **Predicate pushdown** covers only `boolean`, `tinyint/smallint/integer/bigint`,
+  `real/double`, `decimal`, `varchar` and `date`. `LIKE`, function calls and
+  complex expressions are out of MVP scope.
+- **Read-only**: INSERT / UPDATE / DELETE and ADBC `bulkIngest` are not
+  implemented.
+- **TestingFlightSqlServer swallows allocator leak warnings during teardown**:
+  Apache Arrow 19.0.0's own `FlightSqlExample` occasionally leaks, which is not
+  a problem of this connector.
+- **An occasional `Memory was leaked by query. Memory leaked: (128)` WARN**:
+  ADBC's `FlightSqlConnection` keeps a per-Location `FlightSqlClient` in a
+  Caffeine cache (`expireAfterAccess=5min`), and when an entry is evicted — by
+  `AdbcConnection.close()` or by the TTL — the inner `FlightClient` (Arrow
+  Flight 18.x) detects a small leak (tens to hundreds of bytes). Caffeine's
+  removal listener logs the WARN on a ForkJoinPool thread, but it is **log
+  noise that does not affect query results**. It comes from Arrow Flight, so
+  the connector has no way to suppress it; if the message is a nuisance,
+  silence WARN for `com.github.benmanes.caffeine.cache.BoundedLocalCache` in
+  logback/log4j.
+- **JDK 24 reflective access**: needed along the ADBC + Arrow + Netty path, so
+  `tasks.test` in `build.gradle.kts` passes `--add-opens` and
+  `--sun-misc-unsafe-memory-access=allow` explicitly. **The same options must
+  be added to the production Trino `etc/jvm.config`** (see "Required JVM
+  settings on the Trino server" above). Without them the first Flight RPC fails
+  with `UnsupportedOperationException: sun.misc.Unsafe or
+  java.nio.DirectByteBuffer.<init>(long, int) not available` as the cause of
+  `FlightRuntimeException: Failed to read message`. A `Memory was leaked by
+  query` suppressed exception shows up in the same situation — it comes from
+  the child allocator left mid-flight when `ArrowMessage` fails, and disappears
+  once the Unsafe problem is fixed.
 
-## ロードマップ
-
-| Phase | 内容 |
-|---|---|
-| 1 (現在) | Domain pushdown + projection pushdown + endpoint 並列読み |
-| 2 | LIMIT pushdown、メタデータキャッシュの TTL 化、testcontainers 化 |
-| 3 | 複雑式 pushdown (`ConnectorExpressionRule` 群、関数マッピング) |
-| 4 | Aggregation pushdown |
-| 5 | TopN / Join pushdown |
-| 6 | 多方言対応のリファクタリング (`FlightSqlQueryBuilder` を抽象 + 方言別サブクラスに分割、`flight.dialect=generic` で ADBC `getObjects` を直接使うパス) |
-
-## ディレクトリ構成
+## Layout
 
 ```
 src/main/java/io/repro/trino/plugin/flightsql/
-├── FlightSqlPlugin.java                    # SPI エントリ
+├── FlightSqlPlugin.java                    # SPI entry point
 ├── FlightSqlConnectorFactory.java          # Bootstrap + Guice
 ├── FlightSqlConnectorModule.java
-├── FlightSqlConnector.java                 # ConnectorMetadata / SplitManager / PageSourceProvider のホスト
+├── FlightSqlConnector.java                 # hosts ConnectorMetadata / SplitManager / PageSourceProvider
 ├── FlightSqlConfig.java                    # Airlift @Config
 ├── FlightSqlMetadata.java                  # listSchemaNames / getTableHandle / applyFilter / applyProjection
 ├── FlightSqlSplitManager.java              # executePartitioned → splits
@@ -264,24 +259,24 @@ src/main/java/io/repro/trino/plugin/flightsql/
 ├── FlightSqlPageSource.java                # ArrowReader → Trino Page
 ├── FlightSqlTableHandle.java               # SchemaTableName + TupleDomain + projectedColumns
 ├── FlightSqlColumnHandle.java
-├── FlightSqlTransactionHandle.java         # autocommit のみ (enum singleton)
+├── FlightSqlTransactionHandle.java         # autocommit only (enum singleton)
 ├── client/
-│   ├── FlightSqlClient.java                # ADBC ラッパ (executePartitioned / readPartition / 方言別メタデータ SQL)
-│   └── PartitionReader.java                # AdbcConnection + ArrowReader 一体管理
+│   ├── FlightSqlClient.java                # ADBC wrapper (executePartitioned / readPartition / per-dialect metadata SQL)
+│   └── PartitionReader.java                # manages AdbcConnection + ArrowReader as a unit
 ├── query/
-│   └── FlightSqlQueryBuilder.java          # TupleDomain → WHERE、projection → SELECT
+│   └── FlightSqlQueryBuilder.java          # TupleDomain → WHERE, projection → SELECT
 └── arrow/
     ├── ArrowTypeMapper.java                # Arrow Field → Trino Type
-    └── ArrowToTrinoPageBuilder.java        # VectorSchemaRoot → Page (型ごとの専用ループ)
+    └── ArrowToTrinoPageBuilder.java        # VectorSchemaRoot → Page (dedicated loop per type)
 
 src/test/java/io/repro/trino/plugin/flightsql/
-├── TestingFlightSqlServer.java             # FlightSqlExample (Derby) を BeforeAll で起動
-├── FlightSqlQueryRunner.java               # DistributedQueryRunner に本プラグインを install
-├── TestFlightSqlConnectorSmokeTest.java    # 4 ケース (SHOW SCHEMAS/TABLES, SELECT, predicate pushdown)
+├── TestingFlightSqlServer.java             # starts FlightSqlExample (Derby) in BeforeAll
+├── FlightSqlQueryRunner.java               # installs this plugin into a DistributedQueryRunner
+├── TestFlightSqlConnectorSmokeTest.java    # 4 cases (SHOW SCHEMAS/TABLES, SELECT, predicate pushdown)
 ├── TestFlightSqlConfig.java                # Airlift ConfigAssertions
-└── TestFlightSqlPlugin.java                # connector factory 名検証
+└── TestFlightSqlPlugin.java                # verifies the connector factory name
 ```
 
-## ライセンス
+## License
 
-(未設定)
+[MIT License](LICENSE) — Copyright (c) 2026 Repro Inc.
