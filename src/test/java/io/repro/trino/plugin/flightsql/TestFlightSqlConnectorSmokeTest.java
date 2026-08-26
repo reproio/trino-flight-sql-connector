@@ -62,4 +62,19 @@ class TestFlightSqlConnectorSmokeTest
         MaterializedResult result = queryRunner.execute("SELECT value FROM flight.app.inttable WHERE id = 1");
         assertThat(result.getRowCount()).isLessThanOrEqualTo(1);
     }
+
+    @Test
+    void countAll()
+    {
+        MaterializedResult expected = queryRunner.execute("SELECT id FROM flight.app.inttable");
+        MaterializedResult result = queryRunner.execute("SELECT count(*) FROM flight.app.inttable");
+        assertThat(result.getOnlyValue()).isEqualTo((long) expected.getRowCount());
+    }
+
+    @Test
+    void countWithPredicate()
+    {
+        MaterializedResult result = queryRunner.execute("SELECT count(*) FROM flight.app.inttable WHERE id = 1");
+        assertThat((long) result.getOnlyValue()).isLessThanOrEqualTo(1L);
+    }
 }
