@@ -1,13 +1,13 @@
 [versions]
 trino   = "476"
 arrow   = "19.0.0"
-adbc    = "0.23.0"
+adbc    = "0.24.0"
 # Must match the jackson version Trino 476 ships with (airbase 336 -> jackson 2.20.1).
 # com.fasterxml.jackson.annotation.* is parent-first in Trino's plugin classloader,
 # so a newer jackson-databind here would fail to find classes like JsonSerializeAs.
 jackson = "2.20.1"
 junit   = "6.1.3"
-assertj = "3.25.3"
+assertj = "3.27.7"
 
 [libraries]
 # Trino: SPI のみ provided。plugin-toolkit は Airlift bootstrap / configuration / json と Trino 内部ユーティリティを引くため残す。
@@ -29,7 +29,7 @@ arrow-vector           = { module = "org.apache.arrow:arrow-vector",        vers
 
 # テスト用 FlightSqlExample (Derby バック) 一式。Maven test scope の transitive を Gradle は引かないので明示。
 flight-sql            = { module = "org.apache.arrow:flight-sql",          version.ref = "arrow" }
-derby                 = { module = "org.apache.derby:derby",               version = "10.15.2.0" }
+derby                 = { module = "org.apache.derby:derby",               version = "10.17.1.0" }
 commons-dbcp2         = { module = "org.apache.commons:commons-dbcp2",     version = "2.14.0" }
 commons-pool2         = { module = "org.apache.commons:commons-pool2",     version = "2.13.1" }
 commons-text          = { module = "org.apache.commons:commons-text",      version = "1.15.0" }
