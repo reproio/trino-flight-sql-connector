@@ -6,7 +6,7 @@ adbc    = "0.23.0"
 # com.fasterxml.jackson.annotation.* is parent-first in Trino's plugin classloader,
 # so a newer jackson-databind here would fail to find classes like JsonSerializeAs.
 jackson = "2.20.1"
-junit   = "5.10.2"
+junit   = "6.1.3"
 assertj = "3.25.3"
 
 [libraries]
