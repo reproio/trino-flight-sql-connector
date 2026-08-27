@@ -20,7 +20,7 @@ out across exactly as many endpoints as the server advertises.
 | Trino | 476 |
 | JDK | 24 (required by Trino 476) |
 | Arrow Java | 19.0.0 |
-| ADBC | 0.23.0 |
+| ADBC | 0.24.0 |
 | Gradle | 9.x (wrapper included) |
 
 ## Architecture

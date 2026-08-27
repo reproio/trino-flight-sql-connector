@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags: ['[0-9]*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # gradle-git-version derives the project version from git tags,
+          # so the full history (including tags) is required.
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '24'
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      # `build` runs the tests (and would produce the zip via `assemble`), but
+      # name both distribution tasks explicitly rather than relying on that wiring.
+      - name: Build and test distributions
+        run: ./gradlew build trinoPluginDistZip trinoPluginDistTar
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: >
+          gh release create "$TAG"
+          build/distributions/*.zip
+          build/distributions/*.tar
+          --title "$TAG"
+          --generate-notes
