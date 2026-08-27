@@ -279,4 +279,4 @@ src/test/java/io/repro/trino/plugin/flightsql/
 
 ## License
 
-[MIT License](LICENSE) — Copyright (c) 2026 Repro Inc.
+[Apache License 2.0](LICENSE) — Copyright 2026 Repro Inc.
