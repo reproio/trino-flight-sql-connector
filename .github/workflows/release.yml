@@ -24,10 +24,10 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
 
-      # `build` runs the tests and produces the zip via `assemble`;
-      # the tar distribution is not wired into `assemble`, so ask for it explicitly.
+      # `build` runs the tests (and would produce the zip via `assemble`), but
+      # name both distribution tasks explicitly rather than relying on that wiring.
       - name: Build and test distributions
-        run: ./gradlew build trinoPluginDistTar
+        run: ./gradlew build trinoPluginDistZip trinoPluginDistTar
 
       - name: Create GitHub release
         env:
