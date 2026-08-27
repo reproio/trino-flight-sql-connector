@@ -20,6 +20,11 @@
       "enabled": false
     },
     {
+      "description": "jackson must match the version bundled with Trino (parent-first in the plugin classloader); bump it only together with the trino version",
+      "matchPackageNames": ["com.fasterxml.jackson:jackson-bom"],
+      "enabled": false
+    },
+    {
       "matchCategories": ["java"],
       "allowedVersions": "/^[0-9]+\\.[0-9]+(\\.[0-9]+){0,3}(-jre)?$/"
     },
