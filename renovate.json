@@ -1,13 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
-  "hostRules": [
-    {
-      "matchHost": "maven.pkg.github.com",
-      "hostType": "maven",
-      "token": "{{ secrets.GITHUB_PACKAGES_TOKEN }}"
-    }
-  ],
   "packageRules": [
     {
       "matchUpdateTypes": ["patch", "pin", "digest"],
