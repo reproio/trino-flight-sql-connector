@@ -1,7 +1,7 @@
 [versions]
 trino   = "476"
 arrow   = "19.0.0"
-adbc    = "0.24.0"
+adbc    = "0.25.0"
 # Must match the jackson version Trino 476 ships with (airbase 336 -> jackson 2.20.1).
 # com.fasterxml.jackson.annotation.* is parent-first in Trino's plugin classloader,
 # so a newer jackson-databind here would fail to find classes like JsonSerializeAs.

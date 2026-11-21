@@ -1,7 +1,7 @@
 plugins {
     `java-library`
     distribution
-    id("com.palantir.git-version") version "5.1.0"
+    id("com.palantir.git-version") version "5.2.0"
 }
 
 val gitVersion: groovy.lang.Closure<String> by extra
